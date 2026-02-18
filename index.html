@@ -310,11 +310,51 @@
         // ── 管理面板 ───────────────────────────────
         function AdminPanel({ itinerary, setItinerary, personal, setPersonal, settings, setSettings, logs, setLogs, onClose, showToast, gistConfig, setGistConfig, syncStatus, lastSyncTime, triggerSync }) {
           const [activeTab, setActiveTab] = useState("itinerary");
+          const [dragIndex, setDragIndex] = useState(null);
+          const [dragOverIndex, setDragOverIndex] = useState(null);
           const cardStyle = {background:"white",borderRadius:16,padding:16,marginBottom:12,border:"1px solid #E5E7EB"};
           const inputStyle = {width:"100%",padding:10,border:"1.5px solid #E5E7EB",borderRadius:8,fontSize:14,marginBottom:10,display:"block",boxSizing:"border-box"};
           const updateItinerary = (id, field, val) => setItinerary(itinerary.map(item => item.id === id ? {...item, [field]: val} : item));
           const deleteItinerary = (id) => confirm("确定删除该站点吗？") && setItinerary(itinerary.filter(item => item.id !== id));
           const deleteLog = (id) => confirm("确定删除这条记录吗？") && setLogs(logs.filter(l => l.id !== id));
+
+          // 拖拽排序相关函数
+          const handleDragStart = (e, index) => {
+            setDragIndex(index);
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', index);
+          };
+
+          const handleDragOver = (e, index) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            setDragOverIndex(index);
+          };
+
+          const handleDragLeave = () => {
+            setDragOverIndex(null);
+          };
+
+          const handleDrop = (e, dropIndex) => {
+            e.preventDefault();
+            if (dragIndex === null || dragIndex === dropIndex) {
+              setDragIndex(null);
+              setDragOverIndex(null);
+              return;
+            }
+            const newItinerary = [...itinerary];
+            const [draggedItem] = newItinerary.splice(dragIndex, 1);
+            newItinerary.splice(dropIndex, 0, draggedItem);
+            setItinerary(newItinerary);
+            showToast('✓ 站点顺序已更新');
+            setDragIndex(null);
+            setDragOverIndex(null);
+          };
+
+          const handleDragEnd = () => {
+            setDragIndex(null);
+            setDragOverIndex(null);
+          };
 
           return (
             <div style={{position:"fixed",inset:0,background:"#F8FAF9",zIndex:1000,overflowY:"auto",padding:"20px 16px 80px"}}>
@@ -324,8 +364,8 @@
               </div>
 
               {/* 云同步设置 */}
-              <CloudSettings 
-                gistConfig={gistConfig} 
+              <CloudSettings
+                gistConfig={gistConfig}
                 setGistConfig={setGistConfig}
                 onSync={triggerSync}
                 syncStatus={syncStatus}
@@ -345,10 +385,30 @@
               </div>
               {activeTab === "itinerary" && (
                 <div>
+                  <div style={{fontSize:11,color:"#6B7280",marginBottom:12,padding:"8px 12px",background:"#FEF3C7",borderRadius:8}}>💡 拖拽站点可调整顺序</div>
                   {itinerary.map((item, idx) => (
-                    <div key={item.id} style={cardStyle}>
+                    <div
+                      key={item.id}
+                      style={{
+                        ...cardStyle,
+                        opacity: dragIndex === idx ? 0.5 : 1,
+                        transform: dragOverIndex === idx ? 'scale(1.02)' : 'scale(1)',
+                        border: dragOverIndex === idx ? '2px solid #2D6A4F' : '1px solid #E5E7EB',
+                        transition: 'all 0.2s ease',
+                        cursor: 'grab'
+                      }}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, idx)}
+                      onDragOver={(e) => handleDragOver(e, idx)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, idx)}
+                      onDragEnd={handleDragEnd}
+                    >
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,alignItems:"center"}}>
-                        <span style={{fontWeight:700,fontSize:14}}>站点 {idx+1}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{cursor:"grab",fontSize:16,padding:"4px"}}>☰</span>
+                          <span style={{fontWeight:700,fontSize:14}}>站点 {idx+1}</span>
+                        </div>
                         <div style={{display:"flex",gap:8}}>
                           <select value={item.status} onChange={e=>updateItinerary(item.id, "status", e.target.value)} style={{fontSize:12,border:"1px solid #ccc",borderRadius:4,padding:2}}>
                             <option value="done">已完成</option><option value="now">现在</option><option value="next">计划</option>
@@ -723,201 +783,6 @@
               <div style={{padding:16}}>
                 {tab === "map" && (
                   <>
-                    {/* 横向时间轴 - 按国家聚合，一屏展示 */}
-                    <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`, marginBottom:16}}>
-                      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
-                        <div style={{fontSize:13, fontWeight:700, color:c.muted}}>📅 行程时间轴（总览）</div>
-                      </div>
-
-                      {/* 聚合行程数据 - 按国家合并 */}
-                      {(() => {
-                        // 聚合逻辑：按国家分组，合并日期
-                        const aggregated = [];
-                        let currentGroup = null;
-
-                        itinerary.forEach((item, index) => {
-                          const parts = item.country.split('·');
-                          const countryName = parts[0].trim();
-                          const cityName = parts[1] ? parts[1].trim() : null;
-
-                          // 提取日期
-                          const dateMatch = item.dates.match(/(\d+)月(\d+)日[—-](\d+)月(\d+)日/);
-                          let startMonth, startDay, endMonth, endDay;
-                          if (dateMatch) {
-                            startMonth = parseInt(dateMatch[1]);
-                            startDay = parseInt(dateMatch[2]);
-                            endMonth = parseInt(dateMatch[3]);
-                            endDay = parseInt(dateMatch[4]);
-                          }
-
-                          if (currentGroup && currentGroup.country === countryName) {
-                            // 同一国家，更新结束日期和状态
-                            if (endMonth && endDay) {
-                              currentGroup.endMonth = endMonth;
-                              currentGroup.endDay = endDay;
-                            }
-                            // 状态优先级：now > done > next
-                            if (item.status === 'now') currentGroup.status = 'now';
-                            else if (item.status === 'done' && currentGroup.status !== 'now') currentGroup.status = 'done';
-                          } else {
-                            // 新国家，保存之前的组
-                            if (currentGroup) aggregated.push(currentGroup);
-                            // 创建新组
-                            currentGroup = {
-                              id: 'agg-' + index,
-                              country: countryName,
-                              flag: item.flag,
-                              startMonth,
-                              startDay,
-                              endMonth,
-                              endDay,
-                              status: item.status,
-                              cities: cityName ? [cityName] : []
-                            };
-                          }
-
-                          if (cityName) currentGroup.cities.push(cityName);
-                        });
-
-                        // 添加最后一组
-                        if (currentGroup) aggregated.push(currentGroup);
-
-                        // 格式化日期显示
-                        const formatDate = (group) => {
-                          if (!group.startMonth) return group.originalDates || '';
-                          const start = `${group.startMonth}.${group.startDay}`;
-                          const end = `${group.endMonth}.${group.endDay}`;
-                          return `${start}—${end}`;
-                        };
-
-                        return (
-                          <>
-                            {/* 紧凑时间轴 - 自适应宽度 */}
-                            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0"}}>
-                              {aggregated.map((item, index) => {
-                                const isLast = index === aggregated.length - 1;
-                                const statusColors = {
-                                  done: { bg: "#2D6A4F", border: "#2D6A4F", text: "#FFFFFF" },
-                                  now: { bg: "#FF6B35", border: "#FF6B35", text: "#FFFFFF" },
-                                  next: { bg: "#FFFFFF", border: "#B0BEC5", text: "#6B7280" }
-                                };
-                                const colors = statusColors[item.status];
-
-                                return (
-                                  <React.Fragment key={item.id}>
-                                    {/* 节点容器 */}
-                                    <div style={{
-                                      display:"flex", 
-                                      flexDirection:"column", 
-                                      alignItems:"center",
-                                      flex: 1,
-                                      minWidth: 0
-                                    }}>
-                                      {/* 节点圆圈 */}
-                                      <div style={{
-                                        width: 36,
-                                        height: 36,
-                                        borderRadius: "50%",
-                                        background: colors.bg,
-                                        border: `2px solid ${colors.border}`,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        fontSize: 16,
-                                        boxShadow: item.status === 'now' ? "0 0 0 3px rgba(255,107,53,0.3)" : "none",
-                                        flexShrink: 0
-                                      }}>
-                                        <span>{item.flag}</span>
-                                      </div>
-
-                                      {/* 国家名称 */}
-                                      <div style={{
-                                        marginTop: 8,
-                                        fontSize: 12,
-                                        fontWeight: 700,
-                                        color: item.status === 'now' ? '#FF6B35' : '#1F2937',
-                                        textAlign: "center",
-                                        width: "100%",
-                                        overflow: "hidden",
-                                        textOverflow: "ellipsis",
-                                        whiteSpace: "nowrap",
-                                        padding: "0 4px"
-                                      }}>
-                                        {item.country}
-                                      </div>
-
-                                      {/* 聚合日期 */}
-                                      <div style={{
-                                        marginTop: 3,
-                                        fontSize: 10,
-                                        color: '#6B7280',
-                                        textAlign: "center",
-                                        whiteSpace: "nowrap"
-                                      }}>
-                                        {formatDate(item)}
-                                      </div>
-
-                                      {/* 城市数量提示（如果有多个城市） */}
-                                      {item.cities.length > 1 && (
-                                        <div style={{
-                                          marginTop: 2,
-                                          fontSize: 9,
-                                          color: '#9CA3AF',
-                                          textAlign: "center"
-                                        }}>
-                                          {item.cities.length}个城市
-                                        </div>
-                                      )}
-
-                                      {/* 状态指示点 */}
-                                      <div style={{
-                                        marginTop: 4,
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: "50%",
-                                        background: colors.border
-                                      }} />
-                                    </div>
-
-                                    {/* 连接线 */}
-                                    {!isLast && (
-                                      <div style={{
-                                        flex: 0.5,
-                                        height: 2,
-                                        background: item.status === 'done' ? '#2D6A4F' : '#E5E7EB',
-                                        margin: "0 4px",
-                                        marginBottom: 25,
-                                        minWidth: 10,
-                                        maxWidth: 50
-                                      }} />
-                                    )}
-                                  </React.Fragment>
-                                );
-                              })}
-                            </div>
-
-                            {/* 底部进度条 */}
-                            <div style={{marginTop:12, paddingTop:12, borderTop:"1px solid #F3F4F6"}}>
-                              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
-                                <span style={{fontSize:10, color:"#6B7280"}}>行程进度</span>
-                                <span style={{fontSize:10, color:"#2D6A4F", fontWeight:600}}>
-                                  {aggregated.filter(i => i.status === 'done').length}/{aggregated.length} 国家已完成
-                                </span>
-                              </div>
-                              <div style={{width:"100%", height:4, background:"#E5E7EB", borderRadius:2, overflow:"hidden"}}>
-                                <div style={{
-                                  width: `${(aggregated.filter(i => i.status === 'done').length / aggregated.length) * 100}%`,
-                                  height: "100%",
-                                  background: "linear-gradient(90deg, #2D6A4F, #52B788)",
-                                  borderRadius: 2,
-                                  transition: "width 0.3s ease"
-                                }} />
-                              </div>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
                     {/* 行程详情卡片 */}
                     <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
                       <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>🗓️ 行程详情</div>
