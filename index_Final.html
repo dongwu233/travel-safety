@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>旅行安全中心 - 云同步版</title>
+    <!-- React & Babel for direct browser running -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #F8FAF9; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+        #root { min-height: 100vh; }
+        * { box-sizing: border-box; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(1.3); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+    </style>
+<base target="_blank">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useCallback, useEffect, useMemo } = React;
+
+        // ════════════════════════════════════════════
+        //  🔐 密码配置区 — 部署前在这里修改两个密码
+        // ════════════════════════════════════════════
+        const VIEWER_PASSWORD = "travel2026";   // 家人/朋友查看密码
+        const ADMIN_PASSWORD  = "admin888";     // 你自己的管理员密码（可编辑行程）
+
+        // ════════════════════════════════════════════
+        //  📅 默认行程数据
+        // ════════════════════════════════════════════
+        const DEFAULT_ITINERARY = [
+          { id:1, country:"越南 · 河内",      flag:"🇻🇳", dates:"2月17日—2月20日", status:"done", arriveDate:"2026-02-17", lat:21.0285, lng:105.8542 },
+          { id:2, country:"越南 · 胡志明市",  flag:"🇻🇳", dates:"2月21日—2月23日", status:"done", arriveDate:"2026-02-21", lat:10.7769, lng:106.7009 },
+          { id:3, country:"泰国 · 曼谷",      flag:"🇹🇭", dates:"2月24日—3月1日",  status:"now",  arriveDate:"2026-02-24", lat:13.7563, lng:100.5018 },
+          { id:4, country:"马来西亚 · 吉隆坡",flag:"🇲🇾", dates:"3月2日—3月4日",   status:"next", arriveDate:"2026-03-02", lat:3.1390, lng:101.6869 },
+          { id:5, country:"新加坡",            flag:"🇸🇬", dates:"3月5日—3月7日",   status:"next", arriveDate:"2026-03-05", lat:1.3521, lng:103.8198 },
+        ];
+        const DEFAULT_PERSONAL = { name:"", passport:"", blood:"A型", allergy:"无", contact:"", insurance:"", insPhone:"", returnDate:"2026-03-07" };
+        const DEFAULT_SETTINGS = { interval:"24", contactName:"妈妈", contactPhone:"+86 138****8888" };
+        const INIT_LOGS = [
+          { id: 1, loc:"曼谷",     msg:"一切都好，今天去了大皇宫！",   time:"2月24日 09:32",    country:"泰国", lat:13.7500, lng:100.4913, photo:null },
+        ];
+
+        // ════════════════════════════════════════════
+        //  ☁️ GitHub Gist 同步配置与工具
+        // ════════════════════════════════════════════
+
+        // Gist 存储键名
+        const GIST_FILENAME = "travel-safety-data.json";
+
+        // 数据版本控制（用于迁移）
+        const DATA_VERSION = "1.0";
+
+        // 加载本地存储（带版本检查）
+        function loadFromStorage(key, fallback) {
+          try { 
+            const v = localStorage.getItem(key); 
+            if (!v) return fallback;
+            const parsed = JSON.parse(v);
+            // 检查数据版本
+            if (parsed && parsed._version === DATA_VERSION) {
+              return parsed.data !== undefined ? parsed.data : parsed;
+            }
+            return parsed;
+          } catch { return fallback; }
+        }
+
+        function saveToStorage(key, val) {
+          try { 
+            localStorage.setItem(key, JSON.stringify({ _version: DATA_VERSION, data: val })); 
+          } catch {}
+        }
+
+        // Gist API 工具函数
+        const GistAPI = {
+          // 获取 Gist 内容
+          async fetchGist(gistId, token) {
+            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+              headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json'
+              }
+            });
+            if (!response.ok) throw new Error(`获取失败: ${response.status}`);
+            const gist = await response.json();
+            const file = gist.files[GIST_FILENAME];
+            if (!file) throw new Error('数据文件不存在');
+            return JSON.parse(file.content);
+          },
+
+          // 更新 Gist
+          async updateGist(gistId, token, data) {
+            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                files: {
+                  [GIST_FILENAME]: {
+                    content: JSON.stringify(data, null, 2)
+                  }
+                }
+              })
+            });
+            if (!response.ok) throw new Error(`同步失败: ${response.status}`);
+            return await response.json();
+          },
+
+          // 创建新 Gist
+          async createGist(token, data) {
+            const response = await fetch('https://api.github.com/gists', {
+              method: 'POST',
+              headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                description: '旅行安全中心数据备份',
+                public: false, // 私密 Gist
+                files: {
+                  [GIST_FILENAME]: {
+                    content: JSON.stringify(data, null, 2)
+                  }
+                }
+              })
+            });
+            if (!response.ok) throw new Error(`创建失败: ${response.status}`);
+            return await response.json();
+          }
+        };
+
+        // ── 地图组件 ───────────────────────────────
+        function StaticMap({ lat, lng, zoom=14, height=160 }) {
+          if (!lat || !lng) return null;
+          const sz = 256;
+          const n = Math.pow(2, zoom);
+          const tX = Math.floor(((lng + 180) / 360) * n);
+          const tY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n);
+          const tiles = [];
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) tiles.push({ x: tX + dx, y: tY + dy, dx, dy });
+          const fx = ((lng + 180) / 360) * n - tX, fy = (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n - tY;
+          const ox = -(fx - 0.5) * sz, oy = -(fy - 0.5) * sz;
+          return (
+            <div style={{width:"100%", height, borderRadius:12, overflow:"hidden", position:"relative", background:"#e8f4ea", border:"1px solid #C8E6C9"}}>
+              <div style={{position:"absolute", left:"50%", top:"50%", width:sz*3, height:sz*3, transform:`translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px))`}}>
+                {tiles.map(({x, y, dx, dy}) => (
+                  <img key={`${dx}-${dy}`} src={`https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`} alt=""
+                    style={{position:"absolute", left:(dx+1)*sz, top:(dy+1)*sz, width:sz, height:sz, display:"block"}}
+                    onError={e => { e.target.style.opacity = 0; }} />
+                ))}
+              </div>
+              <div style={{position:"absolute", left:"50%", top:"50%", transform:"translate(-50%, -100%)", pointerEvents:"none", zIndex:10}}>
+                <div style={{width:24, height:24, borderRadius:"50% 50% 50% 0", transform:"rotate(-45deg)", background:"#FF6B35", boxShadow:"0 3px 10px rgba(0,0,0,.35)", display:"flex", alignItems:"center", justifyContent:"center"}}>
+                  <span style={{transform:"rotate(45deg)", color:"white", fontSize:11, fontWeight:700}}>★</span>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // ── 地图选择器 ───────────────────────────────
+        function MapPicker({ initLat=13.75, initLng=100.49, onPick }) {
+          const [center,setCenter]=useState({lat:initLat,lng:initLng});
+          const [zoom,setZoom]=useState(13);
+          const [dragging,setDragging]=useState(false);
+          const [dragStart,setDragStart]=useState(null);
+          const sz=256;
+          const toTile=(la,ln,z)=>{const n=Math.pow(2,z);return{x:((ln+180)/360)*n,y:(1-Math.log(Math.tan(la*Math.PI/180)+1/Math.cos(la*Math.PI/180))/Math.PI)/2*n};};
+          const toLL=(tx,ty,z)=>{const n=Math.pow(2,z);return{lat:Math.atan(Math.sinh(Math.PI*(1-2*ty/n)))*180/Math.PI,lng:(tx/n)*360-180};};
+          const ct=toTile(center.lat,center.lng,zoom);
+          const tX=Math.floor(ct.x),tY=Math.floor(ct.y);
+          const ox=-(ct.x-tX-0.5)*sz, oy=-(ct.y-tY-0.5)*sz;
+          const tiles=[]; for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++) tiles.push({x:tX+dx,y:tY+dy,dx,dy});
+          const onDown=e=>{setDragging(true);setDragStart({x:e.clientX,y:e.clientY,lat:center.lat,lng:center.lng});e.preventDefault();};
+          const onMove=useCallback(e=>{
+            if(!dragging||!dragStart)return;
+            const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y,n=Math.pow(2,zoom);
+            const st=toTile(dragStart.lat,dragStart.lng,zoom);
+            const newLat=toLL(st.x,st.y+dy/sz,zoom).lat;
+            setCenter({lat:Math.max(-85,Math.min(85,newLat)),lng:dragStart.lng-(dx/sz)*(360/n)});
+          },[dragging,dragStart,zoom]);
+          const onUp=()=>setDragging(false);
+          useEffect(()=>{window.addEventListener("mousemove",onMove);window.addEventListener("mouseup",onUp);return()=>{window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);};},[onMove]);
+          return (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,color:"#6B7280",marginBottom:6}}>拖动地图，将红针对准你的位置</div>
+              <div style={{width:"100%",height:180,borderRadius:12,overflow:"hidden",position:"relative",background:"#e8f4ea",border:"1px solid #C8E6C9",cursor:dragging?"grabbing":"grab"}}
+                onMouseDown={onDown}>
+                <div style={{position:"absolute",left:"50%",top:"50%",width:sz*5,height:sz*5,transform:`translate(calc(-50% + ${ox}px),calc(-50% + ${oy}px))`,pointerEvents:"none"}}>
+                  {tiles.map(({x,y,dx,dy})=>(
+                    <img key={`${dx}-${dy}`} src={`https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`} alt=""
+                      style={{position:"absolute",left:(dx+2)*sz,top:(dy+2)*sz,width:sz,height:sz,display:"block"}} draggable={false}/>
+                  ))}
+                </div>
+                <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(-50%,-100%)",pointerEvents:"none",zIndex:20}}>
+                  <div style={{width:26,height:26,borderRadius:"50% 50% 50% 0",transform:"rotate(-45deg)",background:"#E63946",boxShadow:"0 4px 12px rgba(230,57,70,.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <span style={{transform:"rotate(45deg)",color:"white",fontSize:12,fontWeight:700}}>✦</span>
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,padding:"8px 12px",background:"#F3F4F6",borderRadius:10,fontSize:11,color:"#6B7280"}}>
+                <span>📍 {center.lat.toFixed(4)}, {center.lng.toFixed(4)}</span>
+                <button onClick={()=>onPick(center.lat,center.lng)} style={{background:"#2D6A4F",color:"white",border:"none",borderRadius:8,padding:"6px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>确认位置</button>
+              </div>
+            </div>
+          );
+        }
+
+        // ── 云同步设置面板 ───────────────────────────────
+        function CloudSettings({ gistConfig, setGistConfig, onSync, syncStatus, lastSyncTime }) {
+          const [showToken, setShowToken] = useState(false);
+          const [isEditing, setIsEditing] = useState(!gistConfig.token);
+
+          const handleSave = () => {
+            saveToStorage('gist_config', gistConfig);
+            setIsEditing(false);
+          };
+
+          const handleTest = async () => {
+            onSync('testing');
+          };
+
+          return (
+            <div style={{background:"white", borderRadius:16, padding:16, border:"1px solid #E5E7EB", marginBottom:16}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+                <div style={{fontSize:14, fontWeight:700, display:"flex", alignItems:"center", gap:6}}>
+                  <span>☁️</span> GitHub 云同步
+                </div>
+                <div style={{display:"flex", gap:8}}>
+                  {syncStatus === 'syncing' && <span style={{fontSize:12, color:"#6B7280"}}>⏳ 同步中...</span>}
+                  {syncStatus === 'success' && <span style={{fontSize:12, color:"#2D6A4F"}}>✅ 已同步</span>}
+                  {syncStatus === 'error' && <span style={{fontSize:12, color:"#DC2626"}}>❌ 失败</span>}
+                  {syncStatus === 'offline' && <span style={{fontSize:12, color:"#F59E0B"}}>📴 离线</span>}
+                </div>
+              </div>
+
+              {isEditing ? (
+                <div>
+                  <div style={{fontSize:12, color:"#6B7280", marginBottom:8, lineHeight:1.5}}>
+                    配置 GitHub Gist 实现数据云同步，换设备也能访问。
+                    <a href="#" onClick={(e)=>{e.preventDefault();alert('1. 访问 github.com/settings/tokens\n2. 生成 Personal access token (classic)\n3. 勾选 gist 权限\n4. 复制 Token 到下方');}} style={{color:"#2D6A4F", marginLeft:4}}>如何获取?</a>
+                  </div>
+                  <input 
+                    type={showToken ? "text" : "password"}
+                    placeholder="GitHub Personal Access Token"
+                    value={gistConfig.token}
+                    onChange={e=>setGistConfig({...gistConfig, token: e.target.value})}
+                    style={{width:"100%", padding:10, border:"1.5px solid #E5E7EB", borderRadius:8, fontSize:13, marginBottom:8, fontFamily:"monospace"}}
+                  />
+                  <input 
+                    type="text"
+                    placeholder="Gist ID (可选，留空自动创建)"
+                    value={gistConfig.gistId}
+                    onChange={e=>setGistConfig({...gistConfig, gistId: e.target.value.trim()})}
+                    style={{width:"100%", padding:10, border:"1.5px solid #E5E7EB", borderRadius:8, fontSize:13, marginBottom:12, fontFamily:"monospace"}}
+                  />
+                  <div style={{display:"flex", gap:8}}>
+                    <button onClick={handleSave} style={{flex:1, padding:10, background:"#2D6A4F", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:700}}>保存配置</button>
+                    <button onClick={()=>setShowToken(!showToken)} style={{padding:10, background:"#F3F4F6", color:"#6B7280", border:"none", borderRadius:8, fontSize:13}}>{showToken ? "隐藏" : "显示"}</button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #F3F4F6"}}>
+                    <span style={{fontSize:12, color:"#6B7280"}}>Token</span>
+                    <span style={{fontSize:12, fontFamily:"monospace", background:"#F3F4F6", padding:"2px 8px", borderRadius:4}}>{gistConfig.token.slice(0,8)}...{gistConfig.token.slice(-4)}</span>
+                  </div>
+                  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #F3F4F6"}}>
+                    <span style={{fontSize:12, color:"#6B7280"}}>Gist ID</span>
+                    <span style={{fontSize:12, fontFamily:"monospace", background:"#F3F4F6", padding:"2px 8px", borderRadius:4}}>{gistConfig.gistId || "未设置"}</span>
+                  </div>
+                  {lastSyncTime && (
+                    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #F3F4F6"}}>
+                      <span style={{fontSize:12, color:"#6B7280"}}>最后同步</span>
+                      <span style={{fontSize:12, color:"#6B7280"}}>{new Date(lastSyncTime).toLocaleString()}</span>
+                    </div>
+                  )}
+                  <div style={{display:"flex", gap:8, marginTop:12}}>
+                    <button onClick={()=>onSync('manual')} style={{flex:1, padding:10, background:"#2D6A4F", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:700}}>🔄 立即同步</button>
+                    <button onClick={()=>setIsEditing(true)} style={{padding:10, background:"#F3F4F6", color:"#6B7280", border:"none", borderRadius:8, fontSize:13}}>编辑</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // ── 管理面板 ───────────────────────────────
+        function AdminPanel({ itinerary, setItinerary, personal, setPersonal, settings, setSettings, logs, setLogs, onClose, showToast, gistConfig, setGistConfig, syncStatus, lastSyncTime, triggerSync }) {
+          const [activeTab, setActiveTab] = useState("itinerary");
+          const cardStyle = {background:"white",borderRadius:16,padding:16,marginBottom:12,border:"1px solid #E5E7EB"};
+          const inputStyle = {width:"100%",padding:10,border:"1.5px solid #E5E7EB",borderRadius:8,fontSize:14,marginBottom:10,display:"block",boxSizing:"border-box"};
+          const updateItinerary = (id, field, val) => setItinerary(itinerary.map(item => item.id === id ? {...item, [field]: val} : item));
+          const deleteItinerary = (id) => confirm("确定删除该站点吗？") && setItinerary(itinerary.filter(item => item.id !== id));
+          const deleteLog = (id) => confirm("确定删除这条记录吗？") && setLogs(logs.filter(l => l.id !== id));
+
+          return (
+            <div style={{position:"fixed",inset:0,background:"#F8FAF9",zIndex:1000,overflowY:"auto",padding:"20px 16px 80px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                <h2 style={{fontSize:20,fontWeight:800}}>⚙️ 管理中心</h2>
+                <button onClick={onClose} style={{background:"#2D6A4F",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700}}>完成退出</button>
+              </div>
+
+              {/* 云同步设置 */}
+              <CloudSettings 
+                gistConfig={gistConfig} 
+                setGistConfig={setGistConfig}
+                onSync={triggerSync}
+                syncStatus={syncStatus}
+                lastSyncTime={lastSyncTime}
+              />
+
+              <div style={{display:"flex",gap:4,marginBottom:20,background:"#E5E7EB",padding:4,borderRadius:12}}>
+                {[["itinerary","行程"],["logs","记录"],["personal","个人"]].map(([id,label])=>{
+                  // 修复：使用立即执行函数返回正确的 JSX
+                  const isActive = activeTab === id;
+                  return (
+                    <button key={id} onClick={()=>setActiveTab(id)} style={{flex:1,padding:8,borderRadius:10,border:"none",background:isActive?"white":"transparent",color:isActive?"#2D6A4F":"#6B7280",fontSize:13,fontWeight:700}}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {activeTab === "itinerary" && (
+                <div>
+                  {itinerary.map((item, idx) => (
+                    <div key={item.id} style={cardStyle}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,alignItems:"center"}}>
+                        <span style={{fontWeight:700,fontSize:14}}>站点 {idx+1}</span>
+                        <div style={{display:"flex",gap:8}}>
+                          <select value={item.status} onChange={e=>updateItinerary(item.id, "status", e.target.value)} style={{fontSize:12,border:"1px solid #ccc",borderRadius:4,padding:2}}>
+                            <option value="done">已完成</option><option value="now">现在</option><option value="next">计划</option>
+                          </select>
+                          <button onClick={()=>deleteItinerary(item.id)} style={{background:"#FEE2E2",color:"#DC2626",border:"none",borderRadius:4,padding:"2px 8px",fontSize:12}}>删除</button>
+                        </div>
+                      </div>
+                      <input style={inputStyle} value={item.country} onChange={e=>updateItinerary(item.id, "country", e.target.value)} placeholder="城市/国家"/>
+                      <div style={{display:"flex",gap:8}}>
+                        <input style={{...inputStyle, flex:1}} value={item.flag} onChange={e=>updateItinerary(item.id, "flag", e.target.value)} placeholder="Emoji"/>
+                        <input style={{...inputStyle, flex:2}} value={item.dates} onChange={e=>updateItinerary(item.id, "dates", e.target.value)} placeholder="日期 (如: 2.17-2.20)"/>
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={()=>setItinerary([...itinerary, {id:Date.now(), country:"", flag:"📍", dates:"", status:"next"}])} style={{width:"100%",padding:12,borderRadius:10,border:"2px dashed #2D6A4F",background:"none",color:"#2D6A4F",fontWeight:700}}>+ 添加新站点</button>
+                </div>
+              )}
+              {activeTab === "logs" && (
+                <div>
+                  {logs.map((l) => (
+                    <div key={l.id} style={{...cardStyle, padding:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                      <div><div style={{fontSize:14, fontWeight:700}}>{l.loc} · {l.time}</div><div style={{fontSize:12, color:"#6B7280"}}>{l.msg}</div></div>
+                      <button onClick={()=>deleteLog(l.id)} style={{background:"#FEE2E2",color:"#DC2626",border:"none",borderRadius:6,padding:"6px 12px",fontSize:12}}>删除</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activeTab === "personal" && (
+                <div style={cardStyle}>
+                  <label style={{fontSize:12,color:"#6B7280"}}>姓名</label><input style={inputStyle} value={personal.name} onChange={e=>setPersonal({...personal, name:e.target.value})}/>
+                  <label style={{fontSize:12,color:"#6B7280"}}>护照号</label><input style={inputStyle} value={personal.passport} onChange={e=>setPersonal({...personal, passport:e.target.value})}/>
+                  <label style={{fontSize:12,color:"#6B7280"}}>紧急联系人</label><input style={inputStyle} value={settings.contactName} onChange={e=>setSettings({...settings, contactName:e.target.value})}/>
+                  <label style={{fontSize:12,color:"#6B7280"}}>联系电话</label><input style={inputStyle} value={settings.contactPhone} onChange={e=>setSettings({...settings, contactPhone:e.target.value})}/>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // ── 主应用 ───────────────────────────────
+        function App() {
+          const [role, setRole] = useState(null);
+          const [tab, setTab] = useState("map");
+          const [itinerary, setItinerary] = useState(DEFAULT_ITINERARY);
+          const [personal, setPersonal] = useState(DEFAULT_PERSONAL);
+          const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+          const [logs, setLogs] = useState(INIT_LOGS);
+
+          // 云同步状态
+          const [gistConfig, setGistConfig] = useState(() => loadFromStorage('gist_config', { token: '', gistId: '' }));
+          const [syncStatus, setSyncStatus] = useState('idle'); // idle, syncing, success, error, offline
+          const [lastSyncTime, setLastSyncTime] = useState(null);
+          const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+          const [toast, setToast] = useState(null);
+          const [checkinModal, setCheckinModal] = useState(false);
+          const [checkinMode, setCheckinMode] = useState("quick");
+          const [showAdmin, setShowAdmin] = useState(false);
+          const [pw, setPw] = useState("");
+          const [shake, setShake] = useState(false);
+
+          const [locationName, setLocationName] = useState("");
+          const [message, setMessage] = useState("");
+          const [gpsCoords, setGpsCoords] = useState(null);
+          const [gpsLoading, setGpsLoading] = useState(false);
+          const [photoPreview, setPhotoPreview] = useState(null);
+          const [showMapPicker, setShowMapPicker] = useState(false);
+          const fileInputRef = useRef(null);
+
+          // 显示提示
+          const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+
+          // 同步数据到 Gist
+          const syncToGist = useCallback(async (showNotification = true) => {
+            if (!gistConfig.token) {
+              if (showNotification) showToast('⚠️ 请先配置 GitHub Token');
+              return;
+            }
+
+            setSyncStatus('syncing');
+            const dataToSync = {
+              itinerary,
+              personal,
+              settings,
+              logs,
+              lastSync: new Date().toISOString()
+            };
+
+            try {
+              let gistId = gistConfig.gistId;
+
+              // 如果没有 Gist ID，创建新的
+              if (!gistId) {
+                const newGist = await GistAPI.createGist(gistConfig.token, dataToSync);
+                gistId = newGist.id;
+                setGistConfig(prev => {
+                  const updated = { ...prev, gistId };
+                  saveToStorage('gist_config', updated);
+                  return updated;
+                });
+                if (showNotification) showToast('✅ 已创建新的云备份');
+              } else {
+                // 更新现有 Gist
+                await GistAPI.updateGist(gistId, gistConfig.token, dataToSync);
+                if (showNotification) showToast('✅ 已同步到云端');
+              }
+
+              setLastSyncTime(Date.now());
+              setSyncStatus('success');
+              saveToStorage('last_sync_time', Date.now());
+            } catch (error) {
+              console.error('Sync error:', error);
+              setSyncStatus('error');
+              if (showNotification) showToast('❌ 同步失败: ' + error.message);
+            }
+          }, [itinerary, personal, settings, logs, gistConfig]);
+
+          // 从 Gist 加载数据
+          const loadFromGist = useCallback(async () => {
+            if (!gistConfig.token || !gistConfig.gistId) {
+              setIsInitialLoad(false);
+              return;
+            }
+
+            setSyncStatus('syncing');
+            try {
+              const data = await GistAPI.fetchGist(gistConfig.gistId, gistConfig.token);
+              if (data) {
+                if (data.itinerary) setItinerary(data.itinerary);
+                if (data.personal) setPersonal(data.personal);
+                if (data.settings) setSettings(data.settings);
+                if (data.logs) setLogs(data.logs);
+                setLastSyncTime(Date.now());
+                setSyncStatus('success');
+                showToast('☁️ 已从云端恢复数据');
+              }
+            } catch (error) {
+              console.error('Load error:', error);
+              setSyncStatus('error');
+              showToast('⚠️ 从云端加载失败，使用本地数据');
+            }
+            setIsInitialLoad(false);
+          }, [gistConfig]);
+
+          // 首次加载：先尝试从 Gist 加载，否则从 localStorage 加载
+          useEffect(() => {
+            const init = async () => {
+              if (gistConfig.token && gistConfig.gistId) {
+                await loadFromGist();
+              } else {
+                // 从 localStorage 加载
+                setItinerary(loadFromStorage("travel_itinerary_v7", DEFAULT_ITINERARY));
+                setPersonal(loadFromStorage("travel_personal_v7", DEFAULT_PERSONAL));
+                setSettings(loadFromStorage("travel_settings_v7", DEFAULT_SETTINGS));
+                setLogs(loadFromStorage("travel_logs_v7", INIT_LOGS));
+                setLastSyncTime(loadFromStorage('last_sync_time', null));
+                setIsInitialLoad(false);
+              }
+            };
+            init();
+          }, []);
+
+          // 数据变化时保存到 localStorage 并自动同步（如果配置了）
+          useEffect(() => {
+            if (isInitialLoad) return;
+
+            saveToStorage("travel_itinerary_v7", itinerary);
+            saveToStorage("travel_personal_v7", personal);
+            saveToStorage("travel_settings_v7", settings);
+            saveToStorage("travel_logs_v7", logs);
+
+            // 自动同步（如果已配置且不是离线状态）
+            if (gistConfig.token && gistConfig.gistId && syncStatus !== 'offline') {
+              const timeout = setTimeout(() => {
+                syncToGist(false); // 静默同步，不显示通知
+              }, 2000); // 延迟 2 秒，避免频繁操作触发太多请求
+              return () => clearTimeout(timeout);
+            }
+          }, [itinerary, personal, settings, logs, isInitialLoad]);
+
+          // 监听网络状态
+          useEffect(() => {
+            const handleOnline = () => {
+              if (syncStatus === 'offline') {
+                setSyncStatus('idle');
+                syncToGist(false);
+              }
+            };
+            const handleOffline = () => setSyncStatus('offline');
+
+            window.addEventListener('online', handleOnline);
+            window.addEventListener('offline', handleOffline);
+            return () => {
+              window.removeEventListener('online', handleOnline);
+              window.removeEventListener('offline', handleOffline);
+            };
+          }, [syncStatus, syncToGist]);
+
+          // 处理解锁
+          const handleUnlock = () => {
+            if (pw === ADMIN_PASSWORD) { setRole("admin"); showToast("管理员已登录"); }
+            else if (pw === VIEWER_PASSWORD) { setRole("viewer"); showToast("查看模式已开启"); }
+            else { setShake(true); setTimeout(() => setShake(false), 500); }
+            setPw("");
+          };
+
+          // 处理照片选择
+          const handlePhotoSelect = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onloadend = () => setPhotoPreview(reader.result);
+            reader.readAsDataURL(file);
+          };
+
+          // 确认签到
+          const confirmCheckin = (isQuick = false) => {
+            const now = new Date();
+            const timeStr = `${now.getMonth()+1}月${now.getDate()}日 ${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
+            const current = itinerary.find(x => x.status === "now") || {country: "旅途中"};
+            const newLog = { 
+              id: Date.now(), 
+              loc: isQuick ? current.country : (locationName || current.country), 
+              msg: isQuick ? "我很安全，一切正常" : (message || "正常签到"), 
+              time: timeStr, 
+              lat: gpsCoords?.lat || null, 
+              lng: gpsCoords?.lng || null, 
+              photo: photoPreview || null 
+            };
+            setLogs([newLog, ...logs]);
+            setCheckinModal(false); setGpsCoords(null); setPhotoPreview(null); setLocationName(""); setMessage("");
+            showToast("✅ 签到成功");
+          };
+
+          // 触发同步（供子组件调用）
+          const triggerSync = (type) => {
+            if (type === 'testing') {
+              // 测试连接
+              syncToGist(true);
+            } else {
+              syncToGist(true);
+            }
+          };
+
+          const c = { primary:"#2D6A4F", light:"#52B788", pale:"#D8F3DC", accent:"#FF6B35", danger:"#E63946", muted:"#6B7280", border:"#E5E7EB", bg:"#F8FAF9" };
+
+          if (!role) return (
+            <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1B4332 0%,#2D6A4F 50%,#40916C 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,animation:shake?"shake 0.5s":""}}>
+              <div style={{fontSize:56,marginBottom:16}}>🌏</div>
+              <div style={{color:"white",fontSize:22,fontWeight:700,marginBottom:32}}>旅行安全中心</div>
+              <div style={{width:"100%",maxWidth:280,textAlign:"center"}}>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="输入访问密码" onKeyDown={e=>e.key==="Enter"&&handleUnlock()}
+                  style={{width:"100%",padding:16,borderRadius:14,border:"none",fontSize:16,textAlign:"center",outline:"none",boxShadow:"0 8px 24px rgba(0,0,0,.2)"}}/>
+                <button onClick={handleUnlock} style={{marginTop:20,width:"100%",padding:16,borderRadius:14,border:"none",background:"#52B788",color:"white",fontSize:16,fontWeight:700,cursor:"pointer"}}>进入系统</button>
+              </div>
+              <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
+            </div>
+          );
+
+          return (
+            <div style={{background:c.bg, minHeight:"100vh", maxWidth:480, margin:"0 auto", position:"relative", paddingBottom:80}}>
+              {/* HEADER */}
+              <div style={{background:"linear-gradient(135deg,#1B4332,#2D6A4F,#40916C)", color:"white", padding:"20px"}}>
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                  <div><div style={{fontSize:20, fontWeight:800}}>🌏 旅行安全中心</div><div style={{fontSize:12, opacity:0.8}}>家人实时监控 · 安全第一</div></div>
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    {/* 同步状态指示器 */}
+                    {gistConfig.token && (
+                      <div 
+                        onClick={()=>syncStatus !== 'syncing' && syncToGist(true)}
+                        style={{display:"flex", alignItems:"center", gap:4, background:"rgba(255,255,255,0.2)", padding:"4px 10px", borderRadius:12, fontSize:11, cursor: syncStatus === 'syncing' ? 'default' : 'pointer'}}
+                        title="点击同步"
+                      >
+                        {syncStatus === 'syncing' && <span style={{animation:"spin 1s linear infinite", display:"inline-block"}}>⟳</span>}
+                        {syncStatus === 'success' && <span>☁️</span>}
+                        {syncStatus === 'error' && <span>⚠️</span>}
+                        {syncStatus === 'offline' && <span>📴</span>}
+                        {syncStatus === 'idle' && <span>☁️</span>}
+                      </div>
+                    )}
+                    <div style={{display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,0.2)", padding:"6px 12px", borderRadius:20, fontSize:12, fontWeight:700, border:"1px solid rgba(255,255,255,0.3)", height:32}}>
+                      <div style={{width:8, height:8, borderRadius:"50%", background:"#69F0AE", animation:"pulse 2s infinite"}}/>
+                      {role==="admin"?"管理员":"查看中"}
+                    </div>
+                    {role==="admin" && <button onClick={()=>setShowAdmin(true)} style={{background:"white", color:c.primary, border:"none", borderRadius:8, padding:"0 12px", fontSize:12, fontWeight:700, cursor:"pointer", height:32}}>⚙️ 编辑</button>}
+                  </div>
+                </div>
+              </div>
+
+              {/* CHECKIN STRIP */}
+              <div style={{background:"white", padding:"15px 20px", borderBottom:`1px solid ${c.border}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <div><div style={{fontSize:11, color:c.muted}}>最后签到</div><div style={{fontSize:14, fontWeight:700, color:c.primary}}>{logs[0]?.time || "无记录"}</div></div>
+                <div style={{display:"flex", gap:8}}>
+                  <button onClick={()=>{setCheckinMode("quick");setCheckinModal(true);}} style={{background:"#1565C0", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700}}>⚡ 快速</button>
+                  <button onClick={()=>{setCheckinMode("detail");setCheckinModal(true);}} style={{background:c.primary, color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700}}>📝 详细</button>
+                </div>
+              </div>
+
+              {/* TABS */}
+              <div style={{display:"flex", background:"white", borderBottom:`1px solid ${c.border}`, position:"sticky", top:0, zIndex:100}}>
+                {[["map","🗺️","行程"],["logs","✅","记录"],["emergency","🆘","紧急"]].map(([id,icon,label])=>{
+                  const isActive = tab === id;
+                  return (
+                    <div key={id} onClick={()=>setTab(id)} style={{flex:1, padding:"12px 0", textAlign:"center", fontSize:12, fontWeight:700, color:isActive?c.primary:c.muted, borderBottom:isActive?`3px solid ${c.primary}`:"3px solid transparent", cursor:"pointer"}}>
+                      <span style={{fontSize:18, display:"block"}}>{icon}</span>{label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* CONTENT */}
+              <div style={{padding:16}}>
+                {tab === "map" && (
+                  <>
+                    <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`, marginBottom:16}}>
+                      <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>📍 实时行程地图 (自动更新)</div>
+                      <div style={{background:"#E8F5E9", height:220, borderRadius:12, position:"relative", overflow:"hidden", border:"1px solid #C8E6C9"}}>
+                        <svg viewBox="0 0 400 220" style={{width:"100%", height:"100%"}}>
+                          {itinerary.map((p, i) => i < itinerary.length - 1 && (
+                            <line key={i} x1={50+i*70} y1={150-i*20} x2={50+(i+1)*70} y2={150-(i+1)*20} stroke={c.primary} strokeWidth="2" strokeDasharray="5,5" />
+                          ))}
+                          {itinerary.map((p, i) => (
+                            <g key={p.id}>
+                              <circle cx={50+i*70} cy={150-i*20} r="6" fill={p.status==='now'?c.accent:p.status==='done'?c.primary:'#B0BEC5'} stroke="white" strokeWidth="2" />
+                              <text x={50+i*70} y={150-i*20-12} textAnchor="middle" style={{fontSize:11, fontWeight:800, fill:c.primary}}>{p.flag} {p.country.split('·')[1] || p.country}</text>
+                            </g>
+                          ))}
+                        </svg>
+                        <div style={{position:"absolute", bottom:10, left:10, display:"flex", gap:8}}>
+                           {[[c.primary,"已过"],[c.accent,"现在"],["#B0BEC5","计划"]].map(([col,txt])=>{
+                             return (
+                               <div key={txt} style={{display:"flex",alignItems:"center",gap:4,fontSize:10,background:"rgba(255,255,255,0.8)",padding:"2px 6px",borderRadius:10}}>
+                                 <div style={{width:8,height:8,borderRadius:"50%",background:col}}/>{txt}
+                               </div>
+                             );
+                           })}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                      <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>🗓️ 行程详情</div>
+                      {itinerary.map((item, i) => (
+                        <div key={item.id} style={{display:"flex", gap:12, padding:"10px 0", borderBottom:i===itinerary.length-1?"none":`1px solid #F3F4F6`}}>
+                          <div style={{width:24, height:24, borderRadius:"50%", background:item.status==='now'?c.accent:item.status==='done'?c.pale:'#F3F4F6', color:item.status==='now'?'white':c.primary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, flexShrink:0}}>{item.status==='done'?'✓':item.status==='now'?'★':i+1}</div>
+                          <div><div style={{fontSize:15, fontWeight:700}}>{item.flag} {item.country}</div><div style={{fontSize:12, color:c.muted}}>{item.dates}</div></div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {tab === "logs" && (
+                  <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                    {logs.map((l, i) => (
+                      <div key={l.id} style={{padding:"12px 0", borderBottom:i===logs.length-1?"none":`1px solid #F3F4F6`}}>
+                        <div style={{display:"flex", justifyContent:"space-between"}}><span style={{fontWeight:700, fontSize:14}}>📍 {l.loc}</span><span style={{fontSize:11, color:c.muted}}>{l.time}</span></div>
+                        <div style={{fontSize:13, color:"#444", marginTop:4}}>{l.msg}</div>
+                        {l.lat && <div style={{marginTop:8}}><StaticMap lat={l.lat} lng={l.lng} height={120} /></div>}
+                        {l.photo && <img src={l.photo} style={{width:"100%", borderRadius:10, marginTop:8, maxHeight:200, objectFit:"cover"}} />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {tab === "emergency" && (
+                  <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                    <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>👤 个人及紧急信息</div>
+                    {[ ["姓名",personal.name],["血型",personal.blood],["紧急联系人",settings.contactName],["联系电话",settings.contactPhone] ].map(([label,val])=>{
+                      return (
+                        <div key={label} style={{display:"flex", justifyContent:"space-between", padding:"10px 0", borderBottom:"1px solid #F3F4F6", fontSize:14}}><span style={{color:c.muted}}>{label}</span><span style={{fontWeight:700}}>{val || "未填写"}</span></div>
+                      );
+                    })}
+                    <div style={{marginTop:20, background:"#FEE2E2", padding:12, borderRadius:12, textAlign:"center"}}><div style={{fontSize:12, color:"#B91C1C", fontWeight:700}}>🆘 紧急求助</div><div style={{fontSize:18, fontWeight:900, color:"#DC2626", marginTop:4}}>191 / 999</div></div>
+                  </div>
+                )}
+              </div>
+
+              {/* FOOTER */}
+              <div style={{padding:40, textAlign:"center"}}>
+                <button onClick={()=>setRole(null)} style={{background:"none", border:"none", color:c.muted, fontSize:13, textDecoration:"underline", cursor:"pointer"}}>退出登录 / 切换账号</button>
+                <div style={{fontSize:10, color:c.muted, marginTop:10}}>© 2026 旅行安全助手 · 云同步版</div>
+              </div>
+
+              {/* CHECKIN MODAL */}
+              {checkinModal && (
+                <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:999, display:"flex", alignItems:"flex-end", justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&setCheckinModal(false)}>
+                  <div style={{background:"white", borderRadius:"24px 24px 0 0", padding:"22px 18px", width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{fontSize:18,fontWeight:700}}>📍 {checkinMode==='quick'?'快速签到':'详细签到'}</h3><button onClick={()=>setCheckinModal(false)} style={{background:"none",border:"none",fontSize:22,color:c.muted}}>×</button></div>
+
+                    {checkinMode === 'quick' ? (
+                      <div style={{textAlign:"center", padding:"20px 0"}}>
+                        <div style={{fontSize:44, marginBottom:12}}>📍</div>
+                        <div style={{fontSize:16, fontWeight:700, marginBottom:20}}>点击下方按钮，自动报平安</div>
+                        <button onClick={()=>confirmCheckin(true)} style={{width:"100%", padding:16, background:"#1565C0", color:"white", border:"none", borderRadius:14, fontSize:16, fontWeight:700}}>⚡ 一键我很安全</button>
+                      </div>
+                    ) : (
+                      <div style={{display:"block"}}>
+                        <input style={{width:"100%",padding:12,border:`1px solid ${c.border}`,borderRadius:10,marginBottom:10,outline:"none"}} placeholder="当前城市" value={locationName} onChange={e=>setLocationName(e.target.value)}/>
+                        <textarea style={{width:"100%",padding:12,border:`1px solid ${c.border}`,borderRadius:10,marginBottom:10,height:60,outline:"none",resize:"none"}} placeholder="留言给家人" value={message} onChange={e=>setMessage(e.target.value)}/>
+
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                          <button onClick={()=>{if(!navigator.geolocation)return;setGpsLoading(true);navigator.geolocation.getCurrentPosition(p=>{setGpsCoords({lat:p.coords.latitude,lng:p.coords.longitude});setGpsLoading(false);showToast("📍 定位成功");},()=>{setGpsLoading(false);alert("定位失败");});}} disabled={gpsLoading} style={{padding:10,border:`1px solid ${c.border}`,borderRadius:10,background:"white",fontSize:13,color:"#1565C0",cursor:"pointer"}}>{gpsLoading?"⏳ 定位中":"🛰️ GPS定位"}</button>
+                          <button onClick={()=>setShowMapPicker(!showMapPicker)} style={{padding:10,border:`1px solid ${c.border}`,borderRadius:10,background:"white",fontSize:13,color:"#6A1B9A",cursor:"pointer"}}>🗺️ 手动选点</button>
+                        </div>
+
+                        {showMapPicker && <MapPicker onPick={(la,ln)=>{setGpsCoords({lat:la,lng:ln});setShowMapPicker(false);}}/>}
+                        {gpsCoords && <div style={{marginBottom:10}}><StaticMap lat={gpsCoords.lat} lng={gpsCoords.lng} height={120} /></div>}
+
+                        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handlePhotoSelect}/>
+                        {!photoPreview ? (
+                          <button onClick={()=>fileInputRef.current.click()} style={{width:"100%",padding:12,border:`2px dashed ${c.border}`,borderRadius:10,background:"#FAFAFA",color:c.muted,marginBottom:12,cursor:"pointer"}}>📷 拍照 / 选择照片</button>
+                        ) : (
+                          <div style={{position:"relative",marginBottom:12}}><img src={photoPreview} style={{width:"100%",borderRadius:12,maxHeight:150,objectFit:"cover",display:"block"}}/><button onClick={()=>setPhotoPreview(null)} style={{position:"absolute",top:5,right:5,background:"rgba(0,0,0,0.5)",color:"white",border:"none",borderRadius:"50%",width:24,height:24,cursor:"pointer"}}>×</button></div>
+                        )}
+                        <button onClick={()=>confirmCheckin(false)} style={{width:"100%",padding:14,background:c.primary,color:"white",border:"none",borderRadius:12,fontWeight:700,cursor:"pointer"}}>✅ 确认签到</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {showAdmin && (
+                <AdminPanel 
+                  itinerary={itinerary} 
+                  setItinerary={setItinerary} 
+                  personal={personal} 
+                  setPersonal={setPersonal} 
+                  settings={settings} 
+                  setSettings={setSettings} 
+                  logs={logs} 
+                  setLogs={setLogs} 
+                  onClose={()=>setShowAdmin(false)} 
+                  showToast={showToast}
+                  gistConfig={gistConfig}
+                  setGistConfig={setGistConfig}
+                  syncStatus={syncStatus}
+                  lastSyncTime={lastSyncTime}
+                  triggerSync={triggerSync}
+                />
+              )}
+              {toast && <div style={{position:"fixed", bottom:100, left:"50%", transform:"translateX(-50%)", background:"rgba(0,0,0,0.8)", color:"white", padding:"10px 20px", borderRadius:20, fontSize:13, zIndex:10000}}>{toast}</div>}
+            </div>
+          );
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
