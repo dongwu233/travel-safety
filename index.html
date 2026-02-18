@@ -16,8 +16,6 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
     </style>
-    <!-- 修复：移除重复的 base 标签 -->
-    <base target="_blank">
 </head>
 <body>
     <div id="root"></div>
@@ -655,318 +653,396 @@
               <div style={{fontSize:56,marginBottom:16}}>🌏</div>
               <div style={{color:"white",fontSize:22,fontWeight:700,marginBottom:32}}>旅行安全中心</div>
               <div style={{width:"100%",maxWidth:280,textAlign:"center"}}>
-                <input
-                  type="password"
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                  placeholder="请输入密码解锁"
-                  style={{
-                    width: "100%",
-                    padding: 14,
-                    borderRadius: 12,
-                    border: "none",
-                    marginBottom: 16,
-                    fontSize: 16,
-                    textAlign: "center",
-                    outline: "none"
-                  }}
-                />
-                <button
-                  onClick={handleUnlock}
-                  style={{
-                    width: "100%",
-                    padding: 14,
-                    borderRadius: 12,
-                    border: "none",
-                    background: "#FFFFFF",
-                    color: "#2D6A4F",
-                    fontSize: 16,
-                    fontWeight: 700,
-                    cursor: "pointer"
-                  }}
-                >
-                  解锁访问
-                </button>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="输入访问密码" onKeyDown={e=>e.key==="Enter"&&handleUnlock()}
+                  style={{width:"100%",padding:16,borderRadius:14,border:"none",fontSize:16,textAlign:"center",outline:"none",boxShadow:"0 8px 24px rgba(0,0,0,.2)"}}/>
+                <button onClick={handleUnlock} style={{marginTop:20,width:"100%",padding:16,borderRadius:14,border:"none",background:"#52B788",color:"white",fontSize:16,fontWeight:700,cursor:"pointer"}}>进入系统</button>
               </div>
+              <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
             </div>
           );
 
-          // 核心功能区（解锁后显示）
           return (
-            <div style={{minHeight:"100vh",background:c.bg,padding:16}}>
-              {/* Toast 提示 */}
-              {toast && (
-                <div style={{
-                  position: "fixed",
-                  top: 20,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  background: "white",
-                  padding: 12,
-                  borderRadius: 8,
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                  zIndex: 9999,
-                  fontSize: 14,
-                  fontWeight: 500
-                }}>
-                  {toast}
+            <div style={{background:c.bg, minHeight:"100vh", maxWidth:480, margin:"0 auto", position:"relative", paddingBottom:80}}>
+              {/* HEADER */}
+              <div style={{background:"linear-gradient(135deg,#1B4332,#2D6A4F,#40916C)", color:"white", padding:"20px"}}>
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                  <div><div style={{fontSize:20, fontWeight:800}}>🌏 旅行安全中心</div><div style={{fontSize:12, opacity:0.8}}>家人实时监控 · 安全第一</div></div>
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    {/* 同步状态指示器 */}
+                    {gistConfig.token && (
+                      <div 
+                        onClick={()=>syncStatus !== 'syncing' && syncToGist(true)}
+                        style={{display:"flex", alignItems:"center", gap:4, background:"rgba(255,255,255,0.2)", padding:"4px 10px", borderRadius:12, fontSize:11, cursor: syncStatus === 'syncing' ? 'default' : 'pointer'}}
+                        title="点击同步"
+                      >
+                        {syncStatus === 'syncing' && <span style={{animation:"spin 1s linear infinite", display:"inline-block"}}>⟳</span>}
+                        {syncStatus === 'success' && <span>☁️</span>}
+                        {syncStatus === 'error' && <span>⚠️</span>}
+                        {syncStatus === 'offline' && <span>📴</span>}
+                        {syncStatus === 'idle' && <span>☁️</span>}
+                      </div>
+                    )}
+                    <div style={{display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,0.2)", padding:"6px 12px", borderRadius:20, fontSize:12, fontWeight:700, border:"1px solid rgba(255,255,255,0.3)", height:32}}>
+                      <div style={{width:8, height:8, borderRadius:"50%", background:"#69F0AE", animation:"pulse 2s infinite"}}/>
+                      {role==="admin"?"管理员":"查看中"}
+                    </div>
+                    {role==="admin" && <button onClick={()=>setShowAdmin(true)} style={{background:"white", color:c.primary, border:"none", borderRadius:8, padding:"0 12px", fontSize:12, fontWeight:700, cursor:"pointer", height:32}}>⚙️ 编辑</button>}
+                  </div>
                 </div>
-              )}
+              </div>
 
-              {/* 顶部导航 */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-                <h1 style={{fontSize:18,fontWeight:800,color:c.primary}}>旅行安全中心</h1>
-                {role === "admin" && (
-                  <button onClick={() => setShowAdmin(true)} style={{background:c.primary,color:"white",border:"none",borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:700}}>
-                    ⚙️ 管理
-                  </button>
+              {/* CHECKIN STRIP - 根据角色显示不同功能 */}
+              <div style={{background:"white", padding:"15px 20px", borderBottom:`1px solid ${c.border}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <div><div style={{fontSize:11, color:c.muted}}>最后签到</div><div style={{fontSize:14, fontWeight:700, color:c.primary}}>{logs[0]?.time || "无记录"}</div></div>
+                {role === "admin" ? (
+                  <div style={{display:"flex", gap:8}}>
+                    <button onClick={()=>{setCheckinMode("quick");setCheckinModal(true);}} style={{background:"#1565C0", color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700}}>⚡ 快速</button>
+                    <button onClick={()=>{setCheckinMode("detail");setCheckinModal(true);}} style={{background:c.primary, color:"white", border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, fontWeight:700}}>📝 详细</button>
+                  </div>
+                ) : (
+                  <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                    <span style={{fontSize:12, color:c.muted}}>👁️ 查看模式</span>
+                    <div style={{background:"#F3F4F6", color:c.muted, borderRadius:10, padding:"8px 16px", fontSize:13}}>🔒 打卡已禁用</div>
+                  </div>
                 )}
               </div>
 
-              {/* 标签切换 */}
-              <div style={{display:"flex",gap:4,marginBottom:20,background:c.border,padding:4,borderRadius:12}}>
-                {[["map","地图"],["log","动态"],["info","信息"]].map(([id,label])=>{
+              {/* TABS */}
+              <div style={{display:"flex", background:"white", borderBottom:`1px solid ${c.border}`, position:"sticky", top:0, zIndex:100}}>
+                {[["map","🗺️","行程"],["logs","✅","记录"],["emergency","🆘","紧急"]].map(([id,icon,label])=>{
                   const isActive = tab === id;
                   return (
-                    <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:8,borderRadius:10,border:"none",background:isActive?"white":"transparent",color:isActive?c.primary:c.muted,fontSize:13,fontWeight:700}}>
-                      {label}
-                    </button>
+                    <div key={id} onClick={()=>setTab(id)} style={{flex:1, padding:"12px 0", textAlign:"center", fontSize:12, fontWeight:700, color:isActive?c.primary:c.muted, borderBottom:isActive?`3px solid ${c.primary}`:"3px solid transparent", cursor:"pointer"}}>
+                      <span style={{fontSize:18, display:"block"}}>{icon}</span>{label}
+                    </div>
                   );
                 })}
               </div>
 
-              {/* 地图标签 */}
-              {tab === "map" && (
-                <div>
-                  {itinerary.map(item => (
-                    <div key={item.id} style={{background:"white",borderRadius:16,padding:16,marginBottom:12,border:`1px solid ${item.status === "now" ? c.light : c.border}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <span style={{fontSize:20}}>{item.flag}</span>
-                          <span style={{fontSize:16,fontWeight:700}}>{item.country}</span>
-                        </div>
-                        <span style={{fontSize:12,color:c.muted}}>{item.dates}</span>
+              {/* CONTENT */}
+              <div style={{padding:16}}>
+                {tab === "map" && (
+                  <>
+                    {/* 横向时间轴 - 按国家聚合，一屏展示 */}
+                    <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`, marginBottom:16}}>
+                      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+                        <div style={{fontSize:13, fontWeight:700, color:c.muted}}>📅 行程时间轴（总览）</div>
                       </div>
-                      <StaticMap lat={item.lat} lng={item.lng} />
-                      {item.status === "now" && role === "admin" && (
-                        <button 
-                          onClick={() => setCheckinModal(true)}
-                          style={{width:"100%",marginTop:12,padding:10,background:c.accent,color:"white",border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer"}}
-                        >
-                          📍 快速签到
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
 
-              {/* 动态标签 */}
-              {tab === "log" && (
-                <div>
-                  {logs.map(log => (
-                    <div key={log.id} style={{background:"white",borderRadius:16,padding:16,marginBottom:12,border:"1px solid c.border"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                        <div style={{fontSize:14,fontWeight:700}}>{log.loc} · {log.time}</div>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <button onClick={() => handleLike(log.id)} style={{background:"none",border:"none",color:c.accent,cursor:"pointer",display:"flex",alignItems:"center",gap:2}}>
-                            ❤️ {log.likes || 0}
+                      {/* 聚合行程数据 - 按国家合并 */}
+                      {(() => {
+                        // 聚合逻辑：按国家分组，合并日期
+                        const aggregated = [];
+                        let currentGroup = null;
+
+                        itinerary.forEach((item, index) => {
+                          const parts = item.country.split('·');
+                          const countryName = parts[0].trim();
+                          const cityName = parts[1] ? parts[1].trim() : null;
+
+                          // 提取日期
+                          const dateMatch = item.dates.match(/(\d+)月(\d+)日[—-](\d+)月(\d+)日/);
+                          let startMonth, startDay, endMonth, endDay;
+                          if (dateMatch) {
+                            startMonth = parseInt(dateMatch[1]);
+                            startDay = parseInt(dateMatch[2]);
+                            endMonth = parseInt(dateMatch[3]);
+                            endDay = parseInt(dateMatch[4]);
+                          }
+
+                          if (currentGroup && currentGroup.country === countryName) {
+                            // 同一国家，更新结束日期和状态
+                            if (endMonth && endDay) {
+                              currentGroup.endMonth = endMonth;
+                              currentGroup.endDay = endDay;
+                            }
+                            // 状态优先级：now > done > next
+                            if (item.status === 'now') currentGroup.status = 'now';
+                            else if (item.status === 'done' && currentGroup.status !== 'now') currentGroup.status = 'done';
+                          } else {
+                            // 新国家，保存之前的组
+                            if (currentGroup) aggregated.push(currentGroup);
+                            // 创建新组
+                            currentGroup = {
+                              id: 'agg-' + index,
+                              country: countryName,
+                              flag: item.flag,
+                              startMonth,
+                              startDay,
+                              endMonth,
+                              endDay,
+                              status: item.status,
+                              cities: cityName ? [cityName] : []
+                            };
+                          }
+
+                          if (cityName) currentGroup.cities.push(cityName);
+                        });
+
+                        // 添加最后一组
+                        if (currentGroup) aggregated.push(currentGroup);
+
+                        // 格式化日期显示
+                        const formatDate = (group) => {
+                          if (!group.startMonth) return group.originalDates || '';
+                          const start = `${group.startMonth}.${group.startDay}`;
+                          const end = `${group.endMonth}.${group.endDay}`;
+                          return `${start}—${end}`;
+                        };
+
+                        return (
+                          <>
+                            {/* 紧凑时间轴 - 自适应宽度 */}
+                            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0"}}>
+                              {aggregated.map((item, index) => {
+                                const isLast = index === aggregated.length - 1;
+                                const statusColors = {
+                                  done: { bg: "#2D6A4F", border: "#2D6A4F", text: "#FFFFFF" },
+                                  now: { bg: "#FF6B35", border: "#FF6B35", text: "#FFFFFF" },
+                                  next: { bg: "#FFFFFF", border: "#B0BEC5", text: "#6B7280" }
+                                };
+                                const colors = statusColors[item.status];
+
+                                return (
+                                  <React.Fragment key={item.id}>
+                                    {/* 节点容器 */}
+                                    <div style={{
+                                      display:"flex", 
+                                      flexDirection:"column", 
+                                      alignItems:"center",
+                                      flex: 1,
+                                      minWidth: 0
+                                    }}>
+                                      {/* 节点圆圈 */}
+                                      <div style={{
+                                        width: 36,
+                                        height: 36,
+                                        borderRadius: "50%",
+                                        background: colors.bg,
+                                        border: `2px solid ${colors.border}`,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        fontSize: 16,
+                                        boxShadow: item.status === 'now' ? "0 0 0 3px rgba(255,107,53,0.3)" : "none",
+                                        flexShrink: 0
+                                      }}>
+                                        <span>{item.flag}</span>
+                                      </div>
+
+                                      {/* 国家名称 */}
+                                      <div style={{
+                                        marginTop: 8,
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        color: item.status === 'now' ? '#FF6B35' : '#1F2937',
+                                        textAlign: "center",
+                                        width: "100%",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        padding: "0 4px"
+                                      }}>
+                                        {item.country}
+                                      </div>
+
+                                      {/* 聚合日期 */}
+                                      <div style={{
+                                        marginTop: 3,
+                                        fontSize: 10,
+                                        color: '#6B7280',
+                                        textAlign: "center",
+                                        whiteSpace: "nowrap"
+                                      }}>
+                                        {formatDate(item)}
+                                      </div>
+
+                                      {/* 城市数量提示（如果有多个城市） */}
+                                      {item.cities.length > 1 && (
+                                        <div style={{
+                                          marginTop: 2,
+                                          fontSize: 9,
+                                          color: '#9CA3AF',
+                                          textAlign: "center"
+                                        }}>
+                                          {item.cities.length}个城市
+                                        </div>
+                                      )}
+
+                                      {/* 状态指示点 */}
+                                      <div style={{
+                                        marginTop: 4,
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: "50%",
+                                        background: colors.border
+                                      }} />
+                                    </div>
+
+                                    {/* 连接线 */}
+                                    {!isLast && (
+                                      <div style={{
+                                        flex: 0.5,
+                                        height: 2,
+                                        background: item.status === 'done' ? '#2D6A4F' : '#E5E7EB',
+                                        margin: "0 4px",
+                                        marginBottom: 25,
+                                        minWidth: 10,
+                                        maxWidth: 50
+                                      }} />
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </div>
+
+                            {/* 底部进度条 */}
+                            <div style={{marginTop:12, paddingTop:12, borderTop:"1px solid #F3F4F6"}}>
+                              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+                                <span style={{fontSize:10, color:"#6B7280"}}>行程进度</span>
+                                <span style={{fontSize:10, color:"#2D6A4F", fontWeight:600}}>
+                                  {aggregated.filter(i => i.status === 'done').length}/{aggregated.length} 国家已完成
+                                </span>
+                              </div>
+                              <div style={{width:"100%", height:4, background:"#E5E7EB", borderRadius:2, overflow:"hidden"}}>
+                                <div style={{
+                                  width: `${(aggregated.filter(i => i.status === 'done').length / aggregated.length) * 100}%`,
+                                  height: "100%",
+                                  background: "linear-gradient(90deg, #2D6A4F, #52B788)",
+                                  borderRadius: 2,
+                                  transition: "width 0.3s ease"
+                                }} />
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    {/* 行程详情卡片 */}
+                    <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                      <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>🗓️ 行程详情</div>
+                      {itinerary.map((item, i) => (
+                        <div key={item.id} style={{display:"flex", gap:12, padding:"10px 0", borderBottom:i===itinerary.length-1?"none":`1px solid #F3F4F6`}}>
+                          <div style={{width:24, height:24, borderRadius:"50%", background:item.status==='now'?c.accent:item.status==='done'?c.pale:'#F3F4F6', color:item.status==='now'?'white':c.primary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, flexShrink:0}}>{item.status==='done'?'✓':item.status==='now'?'★':i+1}</div>
+                          <div><div style={{fontSize:15, fontWeight:700}}>{item.flag} {item.country}</div><div style={{fontSize:12, color:c.muted}}>{item.dates}</div></div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {tab === "logs" && (
+                  <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                    {logs.map((l, i) => (
+                      <div key={l.id} style={{padding:"12px 0", borderBottom:i===logs.length-1?"none":`1px solid #F3F4F6`}}>
+                        <div style={{display:"flex", justifyContent:"space-between"}}><span style={{fontWeight:700, fontSize:14}}>📍 {l.loc}</span><span style={{fontSize:11, color:c.muted}}>{l.time}</span></div>
+                        <div style={{fontSize:13, color:"#444", marginTop:4}}>{l.msg}</div>
+                        {l.lat && <div style={{marginTop:8}}><StaticMap lat={l.lat} lng={l.lng} height={120} /></div>}
+                        {l.photo && <img src={l.photo} style={{width:"100%", borderRadius:10, marginTop:8, maxHeight:200, objectFit:"cover"}} />}
+
+                        {/* 点赞和评论区域 */}
+                        <div style={{marginTop:12, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap"}}>
+                          <button 
+                            onClick={()=>handleLike(l.id)} 
+                            style={{background:"#FEE2E2", color:"#DC2626", border:"none", borderRadius:20, padding:"6px 14px", fontSize:12, display:"flex", alignItems:"center", gap:4, cursor:"pointer"}}
+                          >
+                            <span>❤️</span>
+                            <span>{l.likes || 0}</span>
                           </button>
-                          <button onClick={() => openCommentModal(log.id)} style={{background:"none",border:"none",color:c.muted,cursor:"pointer"}}>💬</button>
+                          <button 
+                            onClick={()=>openCommentModal(l.id)} 
+                            style={{background:"#DBEAFE", color:"#2563EB", border:"none", borderRadius:20, padding:"6px 14px", fontSize:12, display:"flex", alignItems:"center", gap:4, cursor:"pointer"}}
+                          >
+                            <span>💬</span>
+                            <span>评论 ({(l.comments || []).length})</span>
+                          </button>
                         </div>
-                      </div>
-                      <div style={{fontSize:14,marginBottom:12}}>{log.msg}</div>
-                      {log.lat && log.lng && <StaticMap lat={log.lat} lng={log.lng} height={120} />}
-                      {log.comments && log.comments.length > 0 && (
-                        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #f0f0f0"}}>
-                          <div style={{fontSize:12,color:c.muted,marginBottom:8}}>评论区</div>
-                          {log.comments.map(comment => (
-                            <div key={comment.id} style={{background:c.pale,padding:8,borderRadius:8,marginBottom:6}}>
-                              <div style={{fontSize:11,color:c.muted}}>{comment.author} · {comment.time}</div>
-                              <div style={{fontSize:13}}>{comment.text}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
 
-              {/* 信息标签 */}
-              {tab === "info" && (
-                <div style={{background:"white",borderRadius:16,padding:16,border:"1px solid c.border"}}>
-                  <div style={{fontSize:16,fontWeight:700,marginBottom:16,color:c.primary}}>📋 个人应急信息</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>姓名</span>
-                      <span>{personal.name || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>护照号</span>
-                      <span>{personal.passport || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>血型</span>
-                      <span>{personal.blood || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>过敏史</span>
-                      <span>{personal.allergy || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>保险单号</span>
-                      <span>{personal.insurance || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>保险公司电话</span>
-                      <span>{personal.insPhone || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>预计返程日期</span>
-                      <span>{personal.returnDate || "未填写"}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:c.muted}}>紧急联系人</span>
-                      <span>{settings.contactName} ({settings.contactPhone})</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 签到弹窗 */}
-              {checkinModal && (
-                <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
-                  <div style={{background:"white",borderRadius:16,padding:20,width:"90%",maxWidth:400}}>
-                    <div style={{fontSize:18,fontWeight:700,marginBottom:16,color:c.primary}}>📍 签到打卡</div>
-                    <div style={{display:"flex",gap:4,marginBottom:16,background:c.border,padding:4,borderRadius:8}}>
-                      <button onClick={()=>setCheckinMode("quick")} style={{flex:1,padding:6,borderRadius:6,border:"none",background:checkinMode==="quick"?"white":"transparent",color:checkinMode==="quick"?c.primary:c.muted,fontSize:12}}>快速签到</button>
-                      <button onClick={()=>setCheckinMode("custom")} style={{flex:1,padding:6,borderRadius:6,border:"none",background:checkinMode==="custom"?"white":"transparent",color:checkinMode==="custom"?c.primary:c.muted,fontSize:12}}>自定义</button>
-                    </div>
-                    {checkinMode === "custom" && (
-                      <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                        <input
-                          value={locationName}
-                          onChange={(e)=>setLocationName(e.target.value)}
-                          placeholder="当前位置（如：曼谷市区）"
-                          style={{padding:10,border:`1px solid ${c.border}`,borderRadius:8,fontSize:14}}
-                        />
-                        <textarea
-                          value={message}
-                          onChange={(e)=>setMessage(e.target.value)}
-                          placeholder="想说的话（如：一切安好，放心！）"
-                          rows={3}
-                          style={{padding:10,border:`1px solid ${c.border}`,borderRadius:8,fontSize:14,resize:"none"}}
-                        />
-                        <div>
-                          <div style={{fontSize:12,color:c.muted,marginBottom:8}}>位置定位</div>
-                          {!showMapPicker ? (
-                            <div style={{display:"flex",gap:8}}>
-                              <button 
-                                onClick={()=>{
-                                  setGpsLoading(true);
-                                  if (navigator.geolocation) {
-                                    navigator.geolocation.getCurrentPosition(
-                                      (pos) => {
-                                        setGpsCoords({lat: pos.coords.latitude, lng: pos.coords.longitude});
-                                        setGpsLoading(false);
-                                        showToast("📍 定位成功");
-                                      },
-                                      (err) => {
-                                        setGpsLoading(false);
-                                        showToast("❌ 定位失败：" + err.message);
-                                      }
-                                    );
-                                  } else {
-                                    setGpsLoading(false);
-                                    showToast("❌ 浏览器不支持定位");
-                                  }
-                                }}
-                                style={{flex:1,padding:8,borderRadius:8,border:"none",background:c.pale,color:c.primary,fontSize:12}}
-                              >
-                                {gpsLoading ? "🔄 定位中..." : "📱 自动定位"}
-                              </button>
-                              <button onClick={()=>setShowMapPicker(true)} style={{flex:1,padding:8,borderRadius:8,border:"none",background:c.pale,color:c.primary,fontSize:12}}>🗺️ 手动选择</button>
-                            </div>
-                          ) : (
-                            <MapPicker 
-                              initLat={gpsCoords?.lat || 13.75} 
-                              initLng={gpsCoords?.lng || 100.49}
-                              onPick={(lat, lng) => {
-                                setGpsCoords({lat, lng});
-                                setShowMapPicker(false);
-                              }}
-                            />
-                          )}
-                          {gpsCoords && (
-                            <div style={{fontSize:11,color:c.muted,marginTop:8}}>
-                              已选位置：{gpsCoords.lat.toFixed(4)}, {gpsCoords.lng.toFixed(4)}
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <div style={{fontSize:12,color:c.muted,marginBottom:8}}>上传照片（可选）</div>
-                          <div style={{display:"flex",gap:8}}>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              ref={fileInputRef}
-                              onChange={handlePhotoSelect}
-                              style={{display:"none"}}
-                            />
-                            <button onClick={()=>fileInputRef.current.click()} style={{flex:1,padding:8,borderRadius:8,border:"none",background:c.pale,color:c.primary,fontSize:12}}>
-                              📷 选择照片
-                            </button>
+                        {/* 显示评论列表 */}
+                        {(l.comments || []).length > 0 && (
+                          <div style={{marginTop:10, background:"#F9FAFB", borderRadius:8, padding:10}}>
+                            {(l.comments || []).map((comment, idx) => (
+                              <div key={comment.id} style={{padding:"6px 0", borderBottom:idx < (l.comments || []).length - 1 ? "1px solid #E5E7EB" : "none"}}>
+                                <div style={{display:"flex", justifyContent:"space-between", fontSize:11}}>
+                                  <span style={{color:"#2563EB", fontWeight:600}}>{comment.author}</span>
+                                  <span style={{color:"#9CA3AF"}}>{comment.time}</span>
+                                </div>
+                                <div style={{fontSize:12, color:"#374151", marginTop:2}}>{comment.text}</div>
+                              </div>
+                            ))}
                           </div>
-                          {photoPreview && (
-                            <div style={{marginTop:8}}>
-                              <img src={photoPreview} alt="预览" style={{width:"100%",height:120,objectFit:"cover",borderRadius:8}} />
-                            </div>
-                          )}
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {tab === "emergency" && (
+                  <div style={{background:"white", borderRadius:16, padding:16, border:`1px solid ${c.border}`}}>
+                    <div style={{fontSize:12, fontWeight:700, color:c.muted, marginBottom:12}}>👤 个人及紧急信息</div>
+                    {[ ["姓名",personal.name],["血型",personal.blood],["紧急联系人",settings.contactName],["联系电话",settings.contactPhone] ].map(([label,val])=>{
+                      return (
+                        <div key={label} style={{display:"flex", justifyContent:"space-between", padding:"10px 0", borderBottom:"1px solid #F3F4F6", fontSize:14}}><span style={{color:c.muted}}>{label}</span><span style={{fontWeight:700}}>{val || "未填写"}</span></div>
+                      );
+                    })}
+                    <div style={{marginTop:20, background:"#FEE2E2", padding:12, borderRadius:12, textAlign:"center"}}><div style={{fontSize:12, color:"#B91C1C", fontWeight:700}}>🆘 紧急求助</div><div style={{fontSize:18, fontWeight:900, color:"#DC2626", marginTop:4}}>191 / 999</div></div>
+                  </div>
+                )}
+              </div>
+
+              {/* FOOTER */}
+              <div style={{padding:40, textAlign:"center"}}>
+                <button onClick={()=>setRole(null)} style={{background:"none", border:"none", color:c.muted, fontSize:13, textDecoration:"underline", cursor:"pointer"}}>退出登录 / 切换账号</button>
+                <div style={{fontSize:10, color:c.muted, marginTop:10}}>© 2026 旅行安全助手 · 云同步版</div>
+              </div>
+
+              {/* CHECKIN MODAL */}
+              {checkinModal && (
+                <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:999, display:"flex", alignItems:"flex-end", justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&setCheckinModal(false)}>
+                  <div style={{background:"white", borderRadius:"24px 24px 0 0", padding:"22px 18px", width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{fontSize:18,fontWeight:700}}>📍 {checkinMode==='quick'?'快速签到':'详细签到'}</h3><button onClick={()=>setCheckinModal(false)} style={{background:"none",border:"none",fontSize:22,color:c.muted}}>×</button></div>
+
+                    {checkinMode === 'quick' ? (
+                      <div style={{textAlign:"center", padding:"20px 0"}}>
+                        <div style={{fontSize:44, marginBottom:12}}>📍</div>
+                        <div style={{fontSize:16, fontWeight:700, marginBottom:20}}>点击下方按钮，自动报平安</div>
+                        <button onClick={()=>confirmCheckin(true)} style={{width:"100%", padding:16, background:"#1565C0", color:"white", border:"none", borderRadius:14, fontSize:16, fontWeight:700}}>⚡ 一键我很安全</button>
+                      </div>
+                    ) : (
+                      <div style={{display:"block"}}>
+                        <input style={{width:"100%",padding:12,border:`1px solid ${c.border}`,borderRadius:10,marginBottom:10,outline:"none"}} placeholder="当前城市" value={locationName} onChange={e=>setLocationName(e.target.value)}/>
+                        <textarea style={{width:"100%",padding:12,border:`1px solid ${c.border}`,borderRadius:10,marginBottom:10,height:60,outline:"none",resize:"none"}} placeholder="留言给家人" value={message} onChange={e=>setMessage(e.target.value)}/>
+
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                          <button onClick={()=>{if(!navigator.geolocation)return;setGpsLoading(true);navigator.geolocation.getCurrentPosition(p=>{setGpsCoords({lat:p.coords.latitude,lng:p.coords.longitude});setGpsLoading(false);showToast("📍 定位成功");},()=>{setGpsLoading(false);alert("定位失败");});}} disabled={gpsLoading} style={{padding:10,border:`1px solid ${c.border}`,borderRadius:10,background:"white",fontSize:13,color:"#1565C0",cursor:"pointer"}}>{gpsLoading?"⏳ 定位中":"🛰️ GPS定位"}</button>
+                          <button onClick={()=>setShowMapPicker(!showMapPicker)} style={{padding:10,border:`1px solid ${c.border}`,borderRadius:10,background:"white",fontSize:13,color:"#6A1B9A",cursor:"pointer"}}>🗺️ 手动选点</button>
                         </div>
+
+                        {showMapPicker && <MapPicker onPick={(la,ln)=>{setGpsCoords({lat:la,lng:ln});setShowMapPicker(false);}}/>}
+                        {gpsCoords && <div style={{marginBottom:10}}><StaticMap lat={gpsCoords.lat} lng={gpsCoords.lng} height={120} /></div>}
+
+                        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handlePhotoSelect}/>
+                        {!photoPreview ? (
+                          <button onClick={()=>fileInputRef.current.click()} style={{width:"100%",padding:12,border:`2px dashed ${c.border}`,borderRadius:10,background:"#FAFAFA",color:c.muted,marginBottom:12,cursor:"pointer"}}>📷 拍照 / 选择照片</button>
+                        ) : (
+                          <div style={{position:"relative",marginBottom:12}}><img src={photoPreview} style={{width:"100%",borderRadius:12,maxHeight:150,objectFit:"cover",display:"block"}}/><button onClick={()=>setPhotoPreview(null)} style={{position:"absolute",top:5,right:5,background:"rgba(0,0,0,0.5)",color:"white",border:"none",borderRadius:"50%",width:24,height:24,cursor:"pointer"}}>×</button></div>
+                        )}
+                        <button onClick={()=>confirmCheckin(false)} style={{width:"100%",padding:14,background:c.primary,color:"white",border:"none",borderRadius:12,fontWeight:700,cursor:"pointer"}}>✅ 确认签到</button>
                       </div>
                     )}
-                    <div style={{display:"flex",gap:8,marginTop:20}}>
-                      <button onClick={()=>setCheckinModal(false)} style={{flex:1,padding:10,borderRadius:8,border:`1px solid ${c.border}`,background:"none",color:c.muted,fontSize:14}}>取消</button>
-                      <button onClick={()=>confirmCheckin(checkinMode==="quick")} style={{flex:1,padding:10,borderRadius:8,border:"none",background:c.primary,color:"white",fontSize:14,fontWeight:700}}>确认签到</button>
-                    </div>
                   </div>
                 </div>
               )}
 
-              {/* 评论弹窗 */}
-              {commentModal && (
-                <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
-                  <div style={{background:"white",borderRadius:16,padding:20,width:"90%",maxWidth:400}}>
-                    <div style={{fontSize:18,fontWeight:700,marginBottom:16,color:c.primary}}>💬 发表评论</div>
-                    <textarea
-                      value={commentText}
-                      onChange={(e)=>setCommentText(e.target.value)}
-                      placeholder="输入你的评论..."
-                      rows={3}
-                      style={{padding:10,border:`1px solid ${c.border}`,borderRadius:8,fontSize:14,resize:"none",width:"100%",marginBottom:16}}
-                    />
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>setCommentModal(false)} style={{flex:1,padding:10,borderRadius:8,border:`1px solid ${c.border}`,background:"none",color:c.muted,fontSize:14}}>取消</button>
-                      <button onClick={submitComment} style={{flex:1,padding:10,borderRadius:8,border:"none",background:c.primary,color:"white",fontSize:14,fontWeight:700}}>发送</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 管理面板 */}
               {showAdmin && (
                 <AdminPanel 
-                  itinerary={itinerary}
-                  setItinerary={setItinerary}
-                  personal={personal}
-                  setPersonal={setPersonal}
-                  settings={settings}
-                  setSettings={setSettings}
-                  logs={logs}
-                  setLogs={setLogs}
-                  onClose={()=>setShowAdmin(false)}
+                  itinerary={itinerary} 
+                  setItinerary={setItinerary} 
+                  personal={personal} 
+                  setPersonal={setPersonal} 
+                  settings={settings} 
+                  setSettings={setSettings} 
+                  logs={logs} 
+                  setLogs={setLogs} 
+                  onClose={()=>setShowAdmin(false)} 
                   showToast={showToast}
                   gistConfig={gistConfig}
                   setGistConfig={setGistConfig}
@@ -975,13 +1051,34 @@
                   triggerSync={triggerSync}
                 />
               )}
+              {/* COMMENT MODAL */}
+              {commentModal && (
+                <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:999, display:"flex", alignItems:"flex-end", justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&setCommentModal(false)}>
+                  <div style={{background:"white", borderRadius:"24px 24px 0 0", padding:"22px 18px", width:"100%", maxWidth:480}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                      <h3 style={{fontSize:18,fontWeight:700}}>💬 添加评论</h3>
+                      <button onClick={()=>setCommentModal(false)} style={{background:"none",border:"none",fontSize:22,color:c.muted}}>×</button>
+                    </div>
+                    <textarea 
+                      style={{width:"100%",padding:12,border:`1px solid ${c.border}`,borderRadius:10,marginBottom:12,height:100,outline:"none",resize:"none",fontSize:14}} 
+                      placeholder="写下你的评论或祝福..." 
+                      value={commentText} 
+                      onChange={e=>setCommentText(e.target.value)}
+                    />
+                    <div style={{display:"flex", gap:8}}>
+                      <button onClick={()=>setCommentModal(false)} style={{flex:1, padding:12, background:"#F3F4F6", color:"#6B7280", border:"none", borderRadius:12, fontWeight:700}}>取消</button>
+                      <button onClick={submitComment} style={{flex:1, padding:12, background:c.primary, color:"white", border:"none", borderRadius:12, fontWeight:700}}>发送评论</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {toast && <div style={{position:"fixed", bottom:100, left:"50%", transform:"translateX(-50%)", background:"rgba(0,0,0,0.8)", color:"white", padding:"10px 20px", borderRadius:20, fontSize:13, zIndex:10000}}>{toast}</div>}
             </div>
           );
         }
-
-        // 修复核心：挂载 App 组件到 #root 节点
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
-      </script>
+    </script>
 </body>
 </html>
